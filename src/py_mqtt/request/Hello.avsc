@@ -1,0 +1,11 @@
+{
+    "namespace": "py_mqtt.example",
+    "type": "record",
+    "name": "HelloWorld",
+    "fields": [
+        {
+            "name": "msg",
+            "type": "string"
+        }
+    ]
+}
