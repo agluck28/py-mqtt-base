@@ -1,21 +1,52 @@
 import paho.mqtt.client as mqtt
 from queue import Empty, Queue
 import logging
-from typing import Any, TypedDict
+from typing import TypedDict, Any
 from collections.abc import Callable
 import threading
+try:
+    from serializers.AvroHelper import AvroHelper
+except:
+    from .serializers.AvroHelper import AvroHelper
 
 
-class Subscription(TypedDict):
-    topic: str
-    qos: int
-    callback: Callable[[mqtt.Client, Any, mqtt.MQTTMessage], None]
-
-
-class PublishMessage(TypedDict):
+class Message(TypedDict):
     topic: str
     qos: int
     payload: bytes
+
+
+class Subscriber():
+
+    def __init__(self, topic: str, qos: int,
+                 deserializer: AvroHelper,
+                 callback: Callable[[dict, str, int], Any]) -> None:
+        self.topic = topic
+        self.qos = qos
+        self.deserializer = deserializer
+        self.callback = callback
+
+    def handle_subscription(self, client: mqtt.Client,
+                            userdata: Any, msg: mqtt.MQTTMessage) -> None:
+        # handles the data for this subscriptions
+        self.callback(self.deserializer.deserialize(msg.payload),
+                      msg.topic, msg.qos)
+
+
+class Publisher():
+
+    def __init__(self, topic: str, qos: int,
+                 serializer: AvroHelper,
+                 publisher: Callable[[Message], None]) -> None:
+        self.topic = topic
+        self.qos = qos
+        self.serializer = serializer
+        self.publisher = publisher
+
+    def publish(self, data: dict) -> None:
+        msg_bytes = self.serializer.serialize(data=data)
+        self.publisher(Message(topic=self.topic,
+                               qos=self.qos, payload=msg_bytes))
 
 
 FORMAT = '%(asctime)s %(levelname)s: %(message)s'
@@ -30,11 +61,13 @@ class MqttComm():
 
     def __init__(self, server: str, port: int = 1883,
                  client_id: str | None = None, user_name: str | None = None,
-                 password: str | None = None, subscriptions: list[Subscription] | None = None,
+                 password: str | None = None,
+                 subscriptions: set[Subscriber] | None = None,
                  log_level: int = logging.INFO) -> None:
+        self._client = mqtt.Client(
+            client_id=client_id, userdata=self.send_data)
         self._server = server
         self._port = port
-        self._client = mqtt.Client(client_id=client_id)
         # setup logging and pass to Paho MQTT
         self._logger = logging.getLogger(__name__)
         logging.basicConfig(level=log_level, format=FORMAT)
@@ -43,7 +76,8 @@ class MqttComm():
             self._client.username_pw_set(username=user_name, password=password)
         self.subscriptions = subscriptions
         self.queue = Queue()
-        self._active = True
+        self.ready = False
+        self._queue_ready = False
         self._queue_thread = threading.Thread(target=self._consume_queue)
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
@@ -68,10 +102,11 @@ class MqttComm():
                 # Successful connection, subscribe to any subscriptions
                 if self.subscriptions is not None:
                     for sub in self.subscriptions:
-                        self._logger.info('Subscribing to: %s', sub['topic'])
-                        self._client.subscribe(sub['topic'], sub['qos'])
+                        self._logger.info('Subscribing to: %s', sub.topic)
+                        self._client.subscribe(sub.topic, sub.qos)
                         self._client.message_callback_add(
-                            sub['topic'], sub['callback'])
+                            sub.topic, sub.handle_subscription)
+                self.ready = True
             case 1:
                 # connection refused, invalid protocol
                 self._logger.error('Unable to connect due to invalid protocol')
@@ -112,26 +147,43 @@ class MqttComm():
             self._logger.warn(
                 'Unexpected disconnected from client: %d', client._client_id)
 
-    def send_data(self, topic: str, qos: int, payload: bytes):
+    def send_data(self, message: Message) -> None:
         # add to queue with the typed message
-        self.queue.put(PublishMessage(topic=topic, qos=qos, payload=payload))
+        if self.ready:
+            self.queue.put(message)
+        else:
+            raise RuntimeWarning('Unable to send message. Not connected to the server')
 
-    def _publish_message(self, message: PublishMessage) -> None:
+    def add_subscription(self, subscription: Subscriber) -> None:
+        self._logger.info('Subscribing to: %s', subscription.topic)
+        self.subscriptions.add(subscription)
+        self._client.subscribe(subscription.topic,
+                               subscription.qos)
+        self._client.message_callback_add(
+            subscription.topic, subscription.handle_subscription)
+
+    def unsubscribe(self, subscription: Subscriber) -> None:
+        self._logger.info('Unsubscribing to: %s', subscription.topic)
+        self.subscriptions.remove(subscription)
+        self._client.unsubscribe(subscription.topic)
+
+    def _publish_message(self, message: Message) -> None:
         self._client.publish(topic=message['topic'],
                              payload=message['payload'],
                              qos=message['qos'])
 
     def _consume_queue(self) -> None:
-        while self._active:
+        while self._queue_ready:
             try:
-                msg: PublishMessage = self.queue.get(block=True, timeout=0.5)
+                msg: Message = self.queue.get(block=True, timeout=0.5)
                 self._publish_message(msg)
             except Empty:
                 # expected, handle and continue on
                 pass
 
     def start(self) -> None:
-        #start the connection and the queue consumer 
+        # start the connection and the queue consumer
+        self._queue_ready = True
         self._queue_thread.start()
         self._client.connect(self._server, self._port)
         self._client.loop_start()
@@ -139,4 +191,5 @@ class MqttComm():
     def stop(self) -> None:
         self._client.disconnect()
         self._client.loop_stop()
-        self._active = False
+        self.ready = False
+        self._queue_ready = False

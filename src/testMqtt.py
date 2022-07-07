@@ -1,21 +1,41 @@
-from py_mqtt_base.MqttComm import MqttComm, Subscription
-import paho.mqtt.client as mqtt
+from py_mqtt.MqttComm import MqttComm
+from py_mqtt.serializers.AvroHelper import AvroHelper
+from py_mqtt.request.PyMqttRequest import HelloRep, HelloReq, RequestManager
 import time
 
-def cb(client: mqtt.Client, _, msg: mqtt.MQTTMessage):
-    print(msg.topic)
-    print(msg.payload)
 
-sub = Subscription(topic='test/topic', qos=1, callback=cb)
+def main(server: str, schema_file: str, msg: str):
 
-client = MqttComm('localhost', subscriptions=[sub])
+    serializer = AvroHelper(schema_file)
 
-client.start()
+    SERVER = server
+    comm = MqttComm(SERVER)
+    rm = RequestManager(comm)
 
-time.sleep(1)
+    hello_rpy = HelloRep('pi-mqtt', 'test', 1, serializer,
+                         serializer, comm.send_data)
 
-client.send_data('test/topic', 1, b'Hello World')
+    comm.subscriptions = {hello_rpy.subscriber}
 
-time.sleep(1)
+    hello_req = HelloReq('pi-mqtt', 'test', 1, serializer,
+                         serializer, rm.queue)
 
-client.stop()
+    comm.start()
+
+    rm.start()
+    try:
+        while not comm.ready:
+            pass
+    except KeyboardInterrupt:
+        pass
+    rsp = hello_req.send_request(msg=msg)
+    print(rsp)
+    rm.stop()
+    comm.stop()
+
+
+if __name__ == '__main__':
+    schema_file = './py_mqtt/request/Hello.avsc'
+    SERVER = 'localhost'
+    msg = 'World'
+    main(SERVER, schema_file, msg)
