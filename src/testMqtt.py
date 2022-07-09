@@ -1,7 +1,6 @@
 from py_mqtt.MqttComm import MqttComm
 from py_mqtt.serializers.AvroHelper import AvroHelper
 from py_mqtt.request.PyMqttRequest import HelloRep, HelloReq, RequestManager
-import time
 
 
 def main(server: str, schema_file: str, msg: str):

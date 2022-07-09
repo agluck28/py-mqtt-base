@@ -1,7 +1,8 @@
-import avro.schema
-from avro.io import DatumReader, DatumWriter, BinaryDecoder, BinaryEncoder, validate
 from io import BytesIO
-
+import fastavro.schema
+from fastavro.read import schemaless_reader
+from fastavro.write import schemaless_writer
+from fastavro.validation import validate
 
 class AvroHelper():
     '''
@@ -10,10 +11,7 @@ class AvroHelper():
 
     def __init__(self, avro_file: str) -> None:
         try:
-            with open(avro_file, 'rb') as f:
-                self.schema: avro.schema.Schema = avro.schema.parse(f.read())
-            self._datum_writer = DatumWriter(self.schema)
-            self._datum_reader = DatumReader(self.schema)
+            self.schema: fastavro.schema = fastavro.schema.load_schema(avro_file)
         except (FileExistsError, FileNotFoundError):
             raise RuntimeError('Unable to Init due to not finding schema file')
 
@@ -21,10 +19,9 @@ class AvroHelper():
         '''
         Serializes the passed in data and validates it matches the schema
         '''
-        if validate(self.schema, data):
+        if validate(data, self.schema):
             stream = BytesIO()
-            encoder = BinaryEncoder(stream)
-            self._datum_writer.write(data, encoder)
+            schemaless_writer(stream, self.schema, data)
             serial = stream.getvalue()
             stream.close()
             return serial
@@ -37,11 +34,16 @@ class AvroHelper():
         inititlaized with
         '''
         stream = BytesIO(data)
-        decoder = BinaryDecoder(stream)
         try:
-            return self._datum_reader.read(decoder)
+            return schemaless_reader(stream, self.schema)
         except TypeError:
             #occurs when can't de-serialize
             raise RuntimeWarning('Unable to de-serialize the data')
+
+if __name__ == '__main__':
+    str = BytesIO()
+    schema = fastavro.schema.load_schema('../request/Hello.avsc')
+    schemaless_writer(str, schema, {'msg': 'Hello'})
+    print(str.getvalue())
         
 
