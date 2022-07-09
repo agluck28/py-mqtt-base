@@ -152,11 +152,17 @@ class MqttComm():
         if self.ready:
             self.queue.put(message)
         else:
-            raise RuntimeWarning('Unable to send message. Not connected to the server')
+            raise RuntimeWarning(
+                'Unable to send message. Not connected to the server')
 
     def add_subscription(self, subscription: Subscriber) -> None:
+        #check that subscriptions aren't None so it can be added to
+        #if none, create a set and add the single sub
         self._logger.info('Subscribing to: %s', subscription.topic)
-        self.subscriptions.add(subscription)
+        if self.subscriptions is not None:
+            self.subscriptions.add(subscription)
+        else:
+            self.subscriptions = {subscription}
         self._client.subscribe(subscription.topic,
                                subscription.qos)
         self._client.message_callback_add(

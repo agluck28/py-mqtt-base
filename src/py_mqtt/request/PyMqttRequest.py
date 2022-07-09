@@ -76,8 +76,8 @@ class BaseRequest(ABC):
     def send_request(self, **kwargs) -> Any:
         # expects override to put data into self._request
         if self._request is not None:
-            req = self.serializer.serialize(self._request)
             try:
+                req = self.serializer.serialize(self._request)
                 self.request_queue.put(QueueRequest(
                     msg=Message(topic=self.topic,
                                 qos=self.qos,
