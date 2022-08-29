@@ -47,7 +47,7 @@ class AvroHelper():
                 stream = BytesIO(data)
                 return schemaless_reader(stream, self.schema)
             else:
-                stream = StringIO(data)
+                stream = StringIO(data.decode('utf-8'))
                 reader = json_reader(stream, self.schema)
                 #only single record, hack solution
                 for rec in reader:
